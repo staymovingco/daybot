@@ -4,3 +4,4 @@ backtest_*.csv
 __pycache__/
 .venv/
 KILL
+data_cache/
