@@ -13,6 +13,7 @@ from .risk import DayState, RiskManager
 from .strategy import STRATEGIES, _t
 
 LOOP_SECONDS = 30
+IEX_VOLUME_SHARE = 0.03
 
 
 class Bot:
@@ -20,6 +21,11 @@ class Bot:
         s.validate()
         self.s = s
         self.broker = Broker(s.api_key, s.api_secret, paper=s.paper, feed=s.data_feed)
+        if s.data_feed.lower() == "iex":
+            # Free real-time IEX data only sees ~3% of market volume. Scale the dollar-volume
+            # filters to match; the relative-volume ratios already compare IEX to IEX.
+            s.orb.min_or_dollar_volume *= IEX_VOLUME_SHARE
+            s.gap.min_first_bar_dollar_volume *= IEX_VOLUME_SHARE
         self.risk = RiskManager(s.risk)
         self.journal = Journal(s.db_path)
         self.alerts = Alerts(s.telegram_token, s.telegram_chat_id)

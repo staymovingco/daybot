@@ -142,11 +142,14 @@ def main():
     ap.add_argument("--strategy", default="both", choices=["orb", "gap", "both"])
     ap.add_argument("--equity", type=float, default=100.0)
     ap.add_argument("--slippage", type=float, default=0.01, help="$ per share each way")
+    ap.add_argument("--feed", default="sip", choices=["sip", "iex"],
+                    help="sip = full-market history (free plan allows data older than 15 min)")
     a = ap.parse_args()
     s = Settings()
     s.validate()
     from .broker import ET, Broker
-    b = Broker(s.api_key, s.api_secret, paper=True, feed=s.data_feed)
+    b = Broker(s.api_key, s.api_secret, paper=True, feed=a.feed)
+    print(f"Downloading 5-min bars ({a.feed.upper()} feed)... this can take a few minutes.", flush=True)
     syms = [x.strip().upper() for x in a.symbols.split(",") if x.strip()]
     if a.universe:
         syms += [l.strip().upper() for l in open(a.universe) if l.strip() and not l.startswith("#")]
