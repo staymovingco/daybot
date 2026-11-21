@@ -1,0 +1,6 @@
+.env
+*.db
+backtest_*.csv
+__pycache__/
+.venv/
+KILL

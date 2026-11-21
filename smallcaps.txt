@@ -1,0 +1,31 @@
+# Starter universe for backtesting. Add many more low-priced, high-volume names.
+# One symbol per line. Lines starting with # are ignored.
+SOFI
+PLTR
+F
+NIO
+RIVN
+LCID
+SNAP
+AAL
+PLUG
+MARA
+RIOT
+SOUN
+OPEN
+CHPT
+TLRY
+GRAB
+IQ
+BBAI
+RKLB
+HOOD
+JOBY
+ACHR
+LUMN
+CLSK
+QS
+FCEL
+WULF
+DNA
+NKLA

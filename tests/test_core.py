@@ -1,0 +1,143 @@
+import numpy as np
+import pandas as pd
+
+from daybot.config import RiskConfig, StrategyParams
+from daybot.risk import DayState, RiskManager
+from daybot.strategy import find_orb_signal
+from daybot.backtest import simulate_symbol_day, run_portfolio
+
+ET = "America/New_York"
+
+
+def make_day(date="2025-03-03", breakout=True, run_to=None, crash=False):
+    idx = pd.date_range(f"{date} 09:30", f"{date} 15:55", freq="5min", tz=ET)
+    n = len(idx)
+    close = np.full(n, 10.0)
+    close[:3] = [10.0, 10.1, 9.9]            # opening range ~9.85-10.15
+    vol = np.full(n, 100_000.0)
+    if breakout:
+        close[3:] = 10.0
+        close[6] = 10.40                      # breakout bar at 10:00
+        vol[6] = 400_000
+        after = run_to if run_to else 10.40
+        close[7:] = np.linspace(10.45, after, n - 7)
+        if crash:
+            close[7:] = np.linspace(10.2, 9.0, n - 7)
+    df = pd.DataFrame({"open": close, "close": close, "volume": vol}, index=idx)
+    df["open"] = df["close"].shift(1).fillna(df["close"])
+    df["high"] = df[["open", "close"]].max(axis=1) + 0.05
+    df["low"] = df[["open", "close"]].min(axis=1) - 0.05
+    return df
+
+
+def test_signal_found():
+    sig = find_orb_signal("TEST", make_day(), StrategyParams())
+    assert sig is not None
+    assert sig.entry == 10.40 and sig.stop < sig.entry < sig.target
+
+
+def test_no_signal_without_breakout():
+    assert find_orb_signal("TEST", make_day(breakout=False), StrategyParams()) is None
+
+
+def test_no_signal_on_weak_volume():
+    df = make_day()
+    df.iloc[6, df.columns.get_loc("volume")] = 100_000
+    assert find_orb_signal("TEST", df, StrategyParams()) is None
+
+
+def test_sizing_risks_one_percent():
+    rm = RiskManager(RiskConfig())
+    qty = rm.position_size(equity=1000, buying_power=1000, entry=10.0, stop=9.5)
+    assert qty == 20  # $10 risk / $0.50
+
+
+def test_sizing_capped_by_cash():
+    rm = RiskManager(RiskConfig())
+    assert rm.position_size(equity=100, buying_power=100, entry=10.0, stop=9.99) == 9
+
+
+def test_daily_loss_lock():
+    rm = RiskManager(RiskConfig())
+    st = DayState(start_equity=100, peak_equity=100)
+    rm.update(st, 97.9)
+    assert st.locked and not rm.can_open(st, 0)[0]
+
+
+def test_backtest_target_and_stop():
+    p = StrategyParams()
+    win = simulate_symbol_day("W", make_day(run_to=12.0), p)
+    loss = simulate_symbol_day("L", make_day(crash=True), p)
+    assert win.exit_reason == "target" and win.r > 1.5
+    assert loss.exit_reason == "stop" and loss.r < 0
+
+
+def test_portfolio_compounds():
+    sessions = {"W": {pd.Timestamp("2025-03-03").date(): make_day(run_to=12.0)}}
+    trades, curve, dd = run_portfolio(sessions, StrategyParams(), RiskConfig(), 1000)
+    assert len(trades) == 1 and curve[-1][1] > 1000
+
+
+# ---------------- gap-and-go ----------------
+from daybot.config import GapParams
+from daybot.strategy import DayContext, find_gap_signal, context_from_history
+
+
+def make_gap_day(date="2025-03-04", open_px=6.0, then=None, vol0=400_000):
+    """Opens at open_px, small pullback, then pushes to new highs (unless `then` given)."""
+    idx = pd.date_range(f"{date} 09:30", f"{date} 15:55", freq="5min", tz=ET)
+    n = len(idx)
+    path = [open_px + 0.20, open_px + 0.05, open_px + 0.10, open_px + 0.45]   # bar3 = new HOD
+    tail = then if then is not None else np.linspace(open_px + 0.5, open_px + 1.5, n - 4)
+    close = np.array(path + list(tail))
+    df = pd.DataFrame({"close": close}, index=idx)
+    df["open"] = df["close"].shift(1).fillna(open_px)
+    df["high"] = df[["open", "close"]].max(axis=1) + 0.03
+    df["low"] = df[["open", "close"]].min(axis=1) - 0.03
+    df["volume"] = [vol0, 200_000, 150_000, 300_000] + [80_000] * (n - 4)
+    return df[["open", "high", "low", "close", "volume"]]
+
+
+CTX = DayContext(prev_close=5.0, avg_daily_volume=2_000_000)
+
+
+def test_gap_signal_found():
+    sig = find_gap_signal("GAP", make_gap_day(), GapParams(), CTX)
+    assert sig is not None and sig.strategy == "gap"
+    assert sig.stop < sig.entry < sig.target
+    assert sig.time == make_gap_day().index[3]
+
+
+def test_gap_too_small():
+    assert find_gap_signal("GAP", make_gap_day(open_px=5.2), GapParams(), CTX) is None
+
+
+def test_gap_needs_relative_volume():
+    quiet = DayContext(prev_close=5.0, avg_daily_volume=50_000_000)
+    assert find_gap_signal("GAP", make_gap_day(), GapParams(), quiet) is None
+
+
+def test_gap_news_filter():
+    no_news = DayContext(prev_close=5.0, avg_daily_volume=2_000_000, has_news=False)
+    assert find_gap_signal("GAP", make_gap_day(), GapParams(require_news=True), no_news) is None
+    assert find_gap_signal("GAP", make_gap_day(), GapParams(require_news=False), no_news) is not None
+
+
+def test_context_from_history():
+    d1, d2 = pd.Timestamp("2025-03-03").date(), pd.Timestamp("2025-03-04").date()
+    hist = {d1: make_day(), d2: make_gap_day()}
+    ctx = context_from_history(hist, d2)
+    assert ctx.prev_close == float(make_day()["close"].iloc[-1])
+    assert ctx.avg_daily_volume == make_day()["volume"].sum()
+
+
+def test_portfolio_both_strategies():
+    d1, d2 = pd.Timestamp("2025-03-03").date(), pd.Timestamp("2025-03-04").date()
+    # day1 ends ~5.0 so day2 opening at 6.0 is a 20% gap
+    base = make_day(breakout=False)
+    base[["open", "high", "low", "close"]] *= 0.5
+    base["volume"] = 2_000_000 / len(base)
+    sessions = {"GAP": {d1: base, d2: make_gap_day()}}
+    strats = [("orb", StrategyParams()), ("gap", GapParams())]
+    trades, curve, dd = run_portfolio(sessions, strats, RiskConfig(), 1000)
+    assert any(t.strategy == "gap" for t in trades)
