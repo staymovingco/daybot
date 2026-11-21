@@ -34,6 +34,20 @@ class DayContext:
     prev_close: Optional[float] = None
     avg_daily_volume: Optional[float] = None
     has_news: Optional[bool] = None   # None = unknown / not checked
+    market_bars: Optional[pd.DataFrame] = None  # SPY bars for the same day (market filter)
+
+
+def market_ok(ctx: Optional[DayContext], ts) -> bool:
+    """True if SPY's latest completed bar at/before ts closed above SPY VWAP."""
+    if ctx is None or ctx.market_bars is None or ctx.market_bars.empty:
+        return False
+    mb = ctx.market_bars
+    vw = vwap(mb)
+    upto = mb.index <= ts
+    if not upto.any():
+        return False
+    i = upto.nonzero()[0][-1]
+    return float(mb["close"].iloc[i]) > float(vw.iloc[i])
 
 
 def _t(s: str) -> time:
@@ -81,8 +95,11 @@ def find_orb_signal(symbol: str, bars: pd.DataFrame, p: StrategyParams,
         # First close above the range: take it or skip the day (no chasing later breaks)
         if bar["close"] <= vw.iloc[i] or bar["volume"] < p.rvol_min * avg_prior_vol:
             return None
+        if p.market_filter and not market_ok(ctx, ts):
+            return None
         entry = float(bar["close"])
-        stop = _clamp_stop(entry, float((or_high + or_low) / 2), p)
+        raw_stop = float(or_low) if p.stop_mode == "low" else float((or_high + or_low) / 2)
+        stop = _clamp_stop(entry, raw_stop, p)
         if stop is None:
             return None
         return Signal(symbol, ts, entry, stop, entry + p.reward_risk * (entry - stop),
@@ -118,7 +135,8 @@ def find_gap_signal(symbol: str, bars: pd.DataFrame, p: GapParams,
         if bar["close"] > hod:
             elapsed = (i + 1) * p.bar_minutes / SESSION_MINUTES
             rvol = bars["volume"].iloc[:i + 1].sum() / (ctx.avg_daily_volume * elapsed)
-            if bar["close"] > vw.iloc[i] and rvol >= p.rvol_min:
+            if bar["close"] > vw.iloc[i] and rvol >= p.rvol_min and \
+                    (not p.market_filter or market_ok(ctx, ts)):
                 entry = float(bar["close"])
                 pullback_low = float(bars["low"].iloc[max(0, i - 3):i].min())
                 stop = _clamp_stop(entry, pullback_low, p)

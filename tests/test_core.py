@@ -141,3 +141,41 @@ def test_portfolio_both_strategies():
     strats = [("orb", StrategyParams()), ("gap", GapParams())]
     trades, curve, dd = run_portfolio(sessions, strats, RiskConfig(), 1000)
     assert any(t.strategy == "gap" for t in trades)
+
+
+# ---------------- variants + gap scan ----------------
+from dataclasses import replace
+from daybot.gapscan import find_gap_days
+
+
+def test_orb_stop_modes():
+    mid = find_orb_signal("T", make_day(), StrategyParams(stop_mode="mid"))
+    low = find_orb_signal("T", make_day(), StrategyParams(stop_mode="low"))
+    assert low.stop < mid.stop and low.target > mid.target
+
+
+def test_orb_30_minute_range():
+    sig = find_orb_signal("T", make_day(), StrategyParams(or_minutes=30))
+    assert sig is not None and sig.time == make_day().index[6]
+
+
+def test_market_filter():
+    day = make_day()
+    p = StrategyParams(market_filter=True)
+    assert find_orb_signal("T", day, p, DayContext()) is None          # no SPY data -> no trade
+    spy_up = make_day(run_to=12.0)                                       # SPY above VWAP at 10:00
+    assert find_orb_signal("T", day, p, DayContext(market_bars=spy_up)) is not None
+    spy_down = make_day(crash=True)
+    spy_down["close"] = np.linspace(10, 9, len(spy_down))                # SPY sliding all day
+    spy_down["open"] = spy_down["close"]
+    assert find_orb_signal("T", day, p, DayContext(market_bars=spy_down)) is None
+
+
+def test_find_gap_days():
+    idx = pd.date_range("2025-01-01", periods=30, freq="B").date
+    d = pd.DataFrame({"open": 5.0, "close": 5.0, "volume": 1e6}, index=idx)
+    d.loc[idx[25], "open"] = 6.0          # 20% gap
+    d.loc[idx[27], "open"] = 30.0         # big gap but above $20
+    ev = find_gap_days(d, 0.10, 1, 20)
+    assert list(ev.index) == [idx[25]]
+    assert ev.iloc[0]["prev_close"] == 5.0 and abs(ev.iloc[0]["gap"] - 0.2) < 1e-9

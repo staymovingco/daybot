@@ -10,7 +10,7 @@ from .broker import ET, Broker
 from .config import Settings
 from .journal import Alerts, Journal
 from .risk import DayState, RiskManager
-from .strategy import STRATEGIES, _t
+from .strategy import STRATEGIES, DayContext, _t
 
 LOOP_SECONDS = 30
 IEX_VOLUME_SHARE = 0.03
@@ -92,7 +92,10 @@ class Bot:
         candidates = [x for x in self.universe if x not in traded and x not in open_pos]
         if not candidates:
             return
-        bars = self.broker.todays_completed_bars(candidates, p.bar_minutes)
+        need_market = any(self.s.params(n).market_filter for n in self.s.strategies)
+        bars = self.broker.todays_completed_bars(candidates + (["SPY"] if need_market else []),
+                                                 p.bar_minutes)
+        self.market_bars = bars.pop("SPY", None) if need_market else None
         for sym, df in bars.items():
             sig = self._signal(sym, df)
             if not sig:
@@ -114,10 +117,11 @@ class Bot:
 
     def _signal(self, sym, df):
         """First enabled setup that fires on the most recent completed bar."""
-        ctx = self.contexts.get(sym)
+        ctx = self.contexts.get(sym) or DayContext()
+        ctx.market_bars = getattr(self, "market_bars", None)
         for name in self.s.strategies:
             params = self.s.params(name)
-            if name == "gap" and ctx is not None and params.require_news:
+            if name == "gap" and params.require_news:
                 if sym not in self.news_cache:
                     self.news_cache[sym] = self.broker.has_recent_news(sym)
                 ctx.has_news = self.news_cache[sym]

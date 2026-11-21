@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from alpaca.data.enums import DataFeed
+from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.historical.screener import ScreenerClient
 from alpaca.data.historical.news import NewsClient
@@ -56,9 +56,11 @@ class Broker:
         return [p.symbol for p in self.trading.get_all_positions()]
 
     # ---- data ----
-    def bars(self, symbols, start: datetime, end: datetime, bar_minutes: int = 5) -> dict:
+    def bars(self, symbols, start: datetime, end: datetime, bar_minutes: int = 5,
+             adjustment: str = "raw") -> dict:
         req = StockBarsRequest(symbol_or_symbols=symbols, start=start, end=end,
-                               timeframe=TimeFrame(bar_minutes, TimeFrameUnit.Minute), feed=self.feed)
+                               timeframe=TimeFrame(bar_minutes, TimeFrameUnit.Minute), feed=self.feed,
+                               adjustment=Adjustment(adjustment))
         return to_sessions(self.data.get_stock_bars(req).df)
 
     def todays_completed_bars(self, symbols, bar_minutes: int = 5) -> dict:
@@ -117,6 +119,29 @@ class Broker:
         except Exception as e:
             print(f"news check failed for {symbol}: {e}", flush=True)
             return False
+
+    def daily_bars(self, symbols, start: datetime, end: datetime, adjustment: str = "split"):
+        """Raw multi-index daily DataFrame (symbol, timestamp)."""
+        req = StockBarsRequest(symbol_or_symbols=symbols, start=start, end=end,
+                               timeframe=TimeFrame.Day, feed=self.feed, adjustment=Adjustment(adjustment))
+        return self.data.get_stock_bars(req).df
+
+    def listed_symbols(self, include_delisted: bool = True) -> list:
+        """Every NYSE/NASDAQ/AMEX common-stock-style symbol, optionally including delisted ones
+        (reduces survivorship bias in backtests)."""
+        from alpaca.trading.enums import AssetClass, AssetStatus
+        from alpaca.trading.requests import GetAssetsRequest
+        statuses = [AssetStatus.ACTIVE] + ([AssetStatus.INACTIVE] if include_delisted else [])
+        out = set()
+        for st in statuses:
+            for a in self.trading.get_all_assets(GetAssetsRequest(status=st, asset_class=AssetClass.US_EQUITY)):
+                ex = str(getattr(a.exchange, "value", a.exchange))
+                sym = a.symbol
+                warrant_unit_right = len(sym) == 5 and sym[-1] in "WUR"
+                if ex in ("NASDAQ", "NYSE", "AMEX") and sym.isalpha() and len(sym) <= 5 \
+                        and not warrant_unit_right:
+                    out.add(a.symbol)
+        return sorted(out)
 
     # ---- orders ----
     def buy_bracket(self, symbol: str, qty: int, stop: float, target: float) -> str:

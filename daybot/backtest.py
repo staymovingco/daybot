@@ -69,16 +69,19 @@ def simulate_symbol_day(symbol, bars, p: StrategyParams, slippage: float = 0.01,
 
 
 def symbol_candidates(sym, sessions_for_symbol: dict, strategies, rc: RiskConfig,
-                      slippage: float = 0.01, first_day=None) -> list:
+                      slippage: float = 0.01, first_day=None, market: dict = None,
+                      last_day=None) -> list:
     """Every trade the setups would take on one symbol (independent of account size)."""
     out = []
     for d in sorted(sessions_for_symbol):
-        if first_day is not None and d < first_day:
+        if (first_day is not None and d < first_day) or (last_day is not None and d > last_day):
             continue
         bars = sessions_for_symbol[d]
         if len(bars) < 10:
             continue
         ctx = context_from_history(sessions_for_symbol, d)
+        if market is not None:
+            ctx.market_bars = market.get(d)
         for name, p in strategies:
             sig = STRATEGIES[name](sym, bars, p, ctx)
             tr = simulate_symbol_day(sym, bars, p, slippage, sig) if sig else None
@@ -120,13 +123,14 @@ def run_trades(candidates: list, rc: RiskConfig, start_equity: float = 100.0):
 
 
 def run_portfolio(sessions: dict, strategies, rc: RiskConfig,
-                  start_equity: float = 100.0, slippage: float = 0.01, first_day=None):
+                  start_equity: float = 100.0, slippage: float = 0.01, first_day=None,
+                  market: dict = None):
     """sessions = {symbol: {date: bars}}; strategies = [(name, params), ...] or one params object."""
     if isinstance(strategies, StrategyParams):
         strategies = [("orb", strategies)]
     cands = []
     for sym, sd in sessions.items():
-        cands += symbol_candidates(sym, sd, strategies, rc, slippage, first_day)
+        cands += symbol_candidates(sym, sd, strategies, rc, slippage, first_day, market)
     return run_trades(cands, rc, start_equity)
 
 
@@ -196,6 +200,9 @@ def main():
     names = ["orb", "gap"] if a.strategy == "both" else [a.strategy]
     runs = [[n] for n in names] + ([names] if len(names) > 1 else [])
     cands = {tuple(r): [] for r in runs}
+    market = None
+    if any(s.params(n).market_filter for n in names):
+        market = load_symbol(b, "SPY", start, end, s.orb.bar_minutes)
     print(f"Processing {len(syms)} symbols one at a time ({a.feed.upper()} data, cached in data_cache/)",
           flush=True)
     for k, sym in enumerate(syms, 1):
@@ -206,7 +213,8 @@ def main():
             continue
         counts = []
         for r in runs:
-            c = symbol_candidates(sym, days, [(n, s.params(n)) for n in r], s.risk, a.slippage, first_day)
+            c = symbol_candidates(sym, days, [(n, s.params(n)) for n in r], s.risk, a.slippage,
+                                  first_day, market)
             cands[tuple(r)] += c
             counts.append(f"{'+'.join(r)} {len(c)}")
         print(f"  [{k}/{len(syms)}] {sym}: {len(days)} days | setups: {', '.join(counts)}", flush=True)

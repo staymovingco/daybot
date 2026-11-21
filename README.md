@@ -59,6 +59,16 @@ Today's list also misses stocks that were delisted, which makes results look bet
 Needs: 100+ trades, average R above +0.05, drawdown under 10%. If it says NOT READY, don't trade it.
 Change one setting at a time (RVOL_MIN, REWARD_RISK, MIN/MAX_PRICE, symbols) and re-test.
 
+**Phase 1b: test improvements (small, pre-chosen sets only)**
+```
+python -m daybot.sweep --start 2021-01-01 --end 2025-06-30 --universe smallcaps.txt
+python -m daybot.gapscan --start 2021-01-01 --end 2025-06-30
+```
+- `sweep` tests 8 ORB variants: 15 vs 30-min range, stop at middle vs low of range, SPY-above-VWAP filter on/off.
+  Turn on a winner in `.env` with `OR_MINUTES`, `ORB_STOP_MODE`, `MARKET_FILTER`.
+- `gapscan` tests gap-and-go on **every** NYSE/NASDAQ/AMEX stock that gapped 10%+ ($1–$20),
+  including delisted ones. First run takes a while (cached after; safe to stop and resume).
+
 **Phase 2: paper trade 1–2 months**
 ```
 python -m daybot.bot

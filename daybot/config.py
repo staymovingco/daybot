@@ -25,6 +25,8 @@ class StrategyParams:
     min_stop_pct: float = 0.005     # stop at least 0.5% away
     max_stop_pct: float = 0.06      # skip if stop would be more than 6% away
     min_or_dollar_volume: float = 250_000  # liquidity filter on the opening range
+    stop_mode: str = "mid"          # ORB stop: "mid" of opening range or "low" of it
+    market_filter: bool = False     # only buy when SPY is above its own VWAP
 
 
 @dataclass
@@ -68,10 +70,14 @@ class Settings:
     strategies: list = field(default_factory=lambda: [
         s.strip().lower() for s in os.getenv("STRATEGIES", "orb,gap").split(",") if s.strip()])
     orb: StrategyParams = field(default_factory=lambda: StrategyParams(
-        rvol_min=_f("RVOL_MIN", 1.5), reward_risk=_f("REWARD_RISK", 2.0)))
+        rvol_min=_f("RVOL_MIN", 1.5), reward_risk=_f("REWARD_RISK", 2.0),
+        or_minutes=_i("OR_MINUTES", 15), stop_mode=os.getenv("ORB_STOP_MODE", "mid"),
+        market_filter=os.getenv("MARKET_FILTER", "false").lower() == "true",
+        max_stop_pct=_f("ORB_MAX_STOP_PCT", 0.06)))
     gap: GapParams = field(default_factory=lambda: GapParams(
         gap_min=_f("GAP_MIN", 0.10), rvol_min=_f("GAP_RVOL_MIN", 3.0),
         reward_risk=_f("GAP_REWARD_RISK", 2.0),
+        market_filter=os.getenv("GAP_MARKET_FILTER", "false").lower() == "true",
         require_news=os.getenv("GAP_REQUIRE_NEWS", "false").lower() == "true"))
 
     def params(self, name: str) -> StrategyParams:
