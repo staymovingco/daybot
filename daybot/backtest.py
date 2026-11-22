@@ -32,6 +32,7 @@ class Trade:
     r: float
     exit_reason: str
     strategy: str = "orb"
+    side: str = "long"   # "long" or "short"
 
 
 def simulate_symbol_day(symbol, bars, p: StrategyParams, slippage: float = 0.01,
@@ -91,14 +92,17 @@ def symbol_candidates(sym, sessions_for_symbol: dict, strategies, rc: RiskConfig
     return out
 
 
-def run_trades(candidates: list, rc: RiskConfig, start_equity: float = 100.0):
-    """Apply the live account rules (sizing, max trades, daily loss, 1 position) to candidates."""
+def run_trades(candidates: list, rc: RiskConfig, start_equity: float = 100.0, pdt: bool = False):
+    """Apply the live account rules (sizing, max trades, daily loss, 1 position) to candidates.
+    pdt=True: under $25k, max 3 day trades per rolling 5 trading days (FINRA pattern day trader)."""
     by_day = {}
     for tr in candidates:
         by_day.setdefault(tr.day, []).append(tr)
     equity, peak, max_dd = start_equity, start_equity, 0.0
     taken, curve = [], []
-    for d in sorted(by_day):
+    all_days = sorted(by_day)
+    trade_days = []   # index into all_days of each taken trade (for the PDT window)
+    for di, d in enumerate(all_days):
         cands = sorted(by_day[d], key=lambda t: t.entry_time)
         day_start, n, busy_until = equity, 0, None
         for tr in cands:
@@ -108,11 +112,18 @@ def run_trades(candidates: list, rc: RiskConfig, start_equity: float = 100.0):
                 break
             if busy_until is not None and tr.entry_time < busy_until:
                 continue  # max 1 open position
-            qty = math.floor(min(equity * rc.risk_pct / (tr.entry - tr.stop),
+            if pdt and equity < 25_000:
+                window_start = pd.Timestamp(d) - pd.tseries.offsets.BDay(4)
+                recent = sum(1 for td in trade_days if pd.Timestamp(td) >= window_start)
+                if recent >= 3:
+                    break
+            qty = math.floor(min(equity * rc.risk_pct / abs(tr.entry - tr.stop),
                                  equity * rc.cash_buffer / tr.entry))
             if qty < 1:
                 continue
-            equity += qty * (tr.exit - tr.entry)
+            direction = -1 if tr.side == "short" else 1
+            equity += direction * qty * (tr.exit - tr.entry)
+            trade_days.append(d)
             taken.append(tr)
             n += 1
             busy_until = tr.exit_time

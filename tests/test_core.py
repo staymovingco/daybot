@@ -231,3 +231,47 @@ def test_plan_buy():
     assert plan_buy(900, 0, 500, 1, "", "2026-W48") == 500            # weekly cap
     assert plan_buy(30, 10, 500, 1, "", "2026-W48") == 20             # keeps reserve
     assert plan_buy(0.5, 0, 500, 1, "", "2026-W48") == 0              # below minimum
+
+
+# ---------------- gap fade (short) ----------------
+from daybot.fade import FadeParams, simulate_fade
+from daybot.backtest import run_trades as _run_trades, Trade as _Trade
+
+
+def make_fade_day(date="2025-03-05", fade=True):
+    """Opens at 6.00 (20% gap over 5.00), pops to ~6.4, then fades below VWAP."""
+    idx = pd.date_range(f"{date} 09:30", f"{date} 15:55", freq="5min", tz=ET)
+    n = len(idx)
+    up = [6.1, 6.3, 6.4, 6.35]                      # 9:30-9:45
+    down = list(np.linspace(6.0, 5.2, n - 4)) if fade else list(np.linspace(6.45, 7.5, n - 4))
+    close = np.array(up + down)
+    df = pd.DataFrame({"close": close}, index=idx)
+    df["open"] = df["close"].shift(1).fillna(6.0)
+    df["high"] = df[["open", "close"]].max(axis=1) + 0.02
+    df["low"] = df[["open", "close"]].min(axis=1) - 0.02
+    df["volume"] = [500_000, 300_000, 250_000, 200_000] + [100_000] * (n - 4)
+    return df[["open", "high", "low", "close", "volume"]]
+
+
+def test_fade_short_wins_on_fade():
+    tr = simulate_fade("F", make_fade_day(), 5.0, FadeParams(reward_risk=None))
+    assert tr is not None and tr.side == "short" and tr.r > 0 and tr.exit < tr.entry
+
+
+def test_fade_no_trade_when_it_runs():
+    assert simulate_fade("F", make_fade_day(fade=False), 5.0, FadeParams()) is None
+
+
+def test_fade_small_gap_skipped():
+    assert simulate_fade("F", make_fade_day(), 5.9, FadeParams(gap_min=0.10)) is None
+
+
+def test_short_pnl_and_pdt():
+    t0 = pd.Timestamp("2025-03-03 10:00", tz=ET)
+    mk = lambda d: _Trade("S", pd.Timestamp(d).date(), pd.Timestamp(f"{d} 10:00", tz=ET),
+                          pd.Timestamp(f"{d} 11:00", tz=ET), 10.0, 10.5, 9.0, 2.0, "target", "fade", "short")
+    trades = [mk(d) for d in ["2025-03-03", "2025-03-04", "2025-03-05", "2025-03-06", "2025-03-07"]]
+    taken, curve, _ = _run_trades(trades, RiskConfig(), 10_000)
+    assert len(taken) == 5 and curve[-1][1] > 10_000          # shorts profit when price falls
+    taken_pdt, _, _ = _run_trades(trades, RiskConfig(), 10_000, pdt=True)
+    assert len(taken_pdt) == 3                                  # 3 day trades per 5 days
