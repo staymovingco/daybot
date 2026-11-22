@@ -179,3 +179,43 @@ def test_find_gap_days():
     ev = find_gap_days(d, 0.10, 1, 20)
     assert list(ev.index) == [idx[25]]
     assert ev.iloc[0]["prev_close"] == 5.0 and abs(ev.iloc[0]["gap"] - 0.2) < 1e-9
+
+
+# ---------------- swing ----------------
+from daybot import swing
+
+
+def make_daily(n=600, seed=1, drift=0.0004):
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2018-01-01", periods=n)
+    c = 100 * np.exp(np.cumsum(drift + 0.01 * rng.standard_normal(n)))
+    o = np.r_[c[0], c[:-1]] * (1 + 0.001 * rng.standard_normal(n))
+    return pd.DataFrame({"open": o, "high": np.maximum(o, c) * 1.002, "low": np.minimum(o, c) * 0.998,
+                         "close": c, "volume": 1e6}, index=idx)
+
+
+def test_rsi_bounds():
+    r = swing.rsi(make_daily()["close"])
+    assert r.between(0, 100).all()
+
+
+def test_rsi2_no_lookahead_and_trades():
+    df = make_daily()
+    pos, trades = swing.rsi2_positions(df)
+    assert pos.iloc[:200].sum() == 0          # needs 200 days of history before any trade
+    assert len(trades) > 0 and all(x > e for e, x in trades)
+    assert all(x - e <= 10 for e, x in trades)  # max hold respected
+
+
+def test_swing_run_table():
+    data = {s: make_daily(seed=i) for i, s in enumerate(swing.ETFS)}
+    out = swing.run(data, data["SPY"].index[250].date(), 100)
+    assert len(out) == 4 and "Buy & hold SPY (benchmark)" in set(out["strategy"])
+
+
+def test_buy_and_hold_matches_price():
+    df = make_daily()
+    pos = pd.Series(1.0, index=df.index)
+    curve, _ = swing.portfolio({"SPY": df}, {"SPY": pos}, 1.0)
+    expected = df["open"].iloc[-1] / df["open"].iloc[0] * (1 - swing.SLIPPAGE)
+    assert abs(curve.iloc[-1] - expected) / expected < 1e-3

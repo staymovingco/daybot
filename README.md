@@ -69,6 +69,14 @@ python -m daybot.gapscan --start 2021-01-01 --end 2025-06-30
 - `gapscan` tests gap-and-go on **every** NYSE/NASDAQ/AMEX stock that gapped 10%+ ($1–$20),
   including delisted ones. First run takes a while (cached after; safe to stop and resume).
 
+**Swing trading (daily bars) — judged against buy & hold SPY**
+```
+python -m daybot.swing --start 2016-01-01 --end 2025-06-30
+```
+Tests RSI(2) pullbacks (4 ETFs and SPY only) and a 200-day trend filter. Next-day-open fills,
+slippage, fractional shares. A strategy is only worth trading if it beats buy & hold on
+Sharpe AND has a smaller max drawdown.
+
 **Phase 2: paper trade 1–2 months**
 ```
 python -m daybot.bot
