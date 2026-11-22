@@ -334,3 +334,12 @@ def test_find_events_and_simulate():
     tr, daily = pead.simulate(ev, {"X": px, "SPY": spy}, 20, False, px.index[0].date())
     assert len(tr) == 1 and tr.iloc[0]["exit"] == px.index[122]
     assert abs(tr.iloc[0]["ret"] - (px["open"].iloc[122] / px["open"].iloc[102] - 1 - 2 * pead.SLIPPAGE)) < 1e-9
+
+
+def test_parse_alphavantage():
+    data = {"quarterlyEarnings": [
+        {"reportedDate": "2024-05-02", "reportedEPS": "1.53", "estimatedEPS": "1.5"},
+        {"reportedDate": "2024-08-01", "reportedEPS": "None", "estimatedEPS": "1.4"}]}
+    df = pead.parse_alphavantage(data)
+    assert len(df) == 1 and df.iloc[0]["eps"] == 1.53
+    assert len(pead.parse_alphavantage({"Information": "rate limit"})) == 0

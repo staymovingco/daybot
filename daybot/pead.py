@@ -11,7 +11,8 @@ Pre-chosen rules (not tuned):
   - Up to 10 positions at once, 10% of the account each (fractional shares), 0.05% slippage.
 Key number: avg_excess = average trade return MINUS what SPY did over the same days.
 
-Data: earnings from Financial Modeling Prep (FMP_API_KEY in .env), prices from Alpaca.
+Data: earnings from Alpha Vantage (ALPHAVANTAGE_API_KEY, free, full history, 25 stocks/day)
+or FMP (FMP_API_KEY; free plan only returns the last 5 reports). Prices from Alpaca.
 Free FMP plan allows ~250 requests/day; one request per stock, cached in data_cache/fmp/.
 
 Run:  python -m daybot.pead --probe            (check what your FMP plan returns)
@@ -41,6 +42,40 @@ def fmp_get(path: str, key: str, **params):
     return r.status_code, data
 
 
+def parse_alphavantage(data) -> pd.DataFrame:
+    """Alpha Vantage EARNINGS response -> date, eps, est."""
+    out = []
+    for x in (data or {}).get("quarterlyEarnings", []) if isinstance(data, dict) else []:
+        try:
+            out.append(dict(date=pd.Timestamp(x["reportedDate"]), eps=float(x["reportedEPS"]),
+                            est=float(x["estimatedEPS"])))
+        except (KeyError, TypeError, ValueError):
+            continue   # "None" values etc.
+    df = pd.DataFrame(out)
+    if len(df):
+        df = df.drop_duplicates("date").sort_values("date").reset_index(drop=True)
+    return df
+
+
+class DailyLimit(Exception):
+    pass
+
+
+def get_earnings_av(sym: str, key: str) -> pd.DataFrame:
+    os.makedirs(CACHE, exist_ok=True)
+    path = os.path.join(CACHE, f"av_{sym}.json")
+    if os.path.exists(path):
+        return parse_alphavantage(json.load(open(path)))
+    r = requests.get("https://www.alphavantage.co/query",
+                     params=dict(function="EARNINGS", symbol=sym, apikey=key), timeout=30)
+    data = r.json()
+    if isinstance(data, dict) and ("Information" in data or "Note" in data) and "quarterlyEarnings" not in data:
+        raise DailyLimit(str(data.get("Information") or data.get("Note"))[:160])
+    json.dump(data, open(path, "w"))
+    time.sleep(13)   # free plan also limits requests per minute
+    return parse_alphavantage(data)
+
+
 def parse_earnings(rows) -> pd.DataFrame:
     """Accepts FMP stable or v3 shapes. Returns date, eps, est columns."""
     out = []
@@ -62,7 +97,7 @@ def get_earnings(sym: str, key: str) -> pd.DataFrame:
     path = os.path.join(CACHE, f"{sym}.json")
     if os.path.exists(path):
         return parse_earnings(json.load(open(path)))
-    status, data = fmp_get("/stable/earnings", key, symbol=sym, limit=200)
+    status, data = fmp_get("/stable/earnings", key, symbol=sym, limit=5)   # free plan max = 5
     if status != 200 or not isinstance(data, list):
         status2, data2 = fmp_get(f"/api/v3/historical/earning_calendar/{sym}", key, limit=200)
         if status2 == 200 and isinstance(data2, list):
@@ -160,10 +195,20 @@ def main():
     from dotenv import load_dotenv
     load_dotenv()
     key = os.getenv("FMP_API_KEY", "").strip()
-    if not key:
-        raise SystemExit("Add FMP_API_KEY=... to .env first.")
+    av_key = os.getenv("ALPHAVANTAGE_API_KEY", "").strip()
+    if not key and not av_key:
+        raise SystemExit("Add ALPHAVANTAGE_API_KEY=... (recommended) or FMP_API_KEY=... to .env first.")
 
     if a.probe:
+        if av_key:
+            r = requests.get("https://www.alphavantage.co/query",
+                             params=dict(function="EARNINGS", symbol="AAPL", apikey=av_key), timeout=30)
+            df = parse_alphavantage(r.json())
+            print(f"Alpha Vantage EARNINGS: rows {len(df)}"
+                  + (f" | {df['date'].min().date()} to {df['date'].max().date()}" if len(df)
+                     else f" | message: {str(r.json())[:200]}"))
+        if not key:
+            return
         for path, params in [("/stable/earnings", dict(symbol="AAPL", limit=200)),
                              ("/api/v3/historical/earning_calendar/AAPL", dict(limit=200))]:
             st, data = fmp_get(path, key, **params)
@@ -183,23 +228,32 @@ def main():
     start = datetime.fromisoformat(a.start).replace(tzinfo=ET)
     end = datetime.fromisoformat(a.end).replace(tzinfo=ET)
 
-    print(f"Step 1/2: earnings history for {len(syms)} stocks from FMP (cached after first run)...",
+    source = "Alpha Vantage" if av_key else "FMP (free plan: last 5 reports only)"
+    print(f"Step 1/2: earnings history for {len(syms)} stocks from {source} (cached after first run)...",
           flush=True)
-    earn, failed = {}, []
+    earn, failed, stopped = {}, [], False
     for k, sym in enumerate(syms, 1):
         try:
-            earn[sym] = get_earnings(sym, key)
+            earn[sym] = get_earnings_av(sym, av_key) if av_key else get_earnings(sym, key)
+        except DailyLimit as e:
+            print(f"  Daily request limit reached after {len(earn)} stocks ({e}).", flush=True)
+            stopped = True
+            break
         except Exception as e:
             failed.append(sym)
             if len(failed) <= 3:
                 print(f"  {sym}: {e}", flush=True)
             if "limit" in str(e).lower():
-                print("  FMP daily limit reached - rerun tomorrow; finished stocks are cached.")
+                stopped = True
                 break
         if k % 25 == 0:
             print(f"  {k}/{len(syms)}", flush=True)
     if failed:
         print(f"  {len(failed)} stocks had no earnings data on your plan (skipped).")
+    if stopped:
+        cached = sum(1 for f in os.listdir(CACHE) if f.startswith("av_" if av_key else ""))
+        print(f"  {cached} of {len(syms)} stocks downloaded so far. Run the same command again tomorrow")
+        print("  to continue (finished stocks are saved). Results below use only what's downloaded.")
     got = [x for x in earn if len(earn[x])]
     if not got:
         raise SystemExit("No earnings data returned. Run with --probe and tell Claude what it prints.")
