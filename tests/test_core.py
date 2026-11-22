@@ -310,3 +310,27 @@ def test_month_ends():
     idx = pd.bdate_range("2025-01-01", "2025-03-31")
     me = rotation.month_ends(idx)
     assert [idx[i].month for i in me] == [1, 2]
+
+
+# ---------------- post-earnings drift ----------------
+from daybot import pead
+
+
+def test_parse_earnings_both_shapes():
+    stable = [{"date": "2024-05-02", "epsActual": 1.5, "epsEstimated": 1.3},
+              {"date": "2024-08-01", "epsActual": None, "epsEstimated": 1.4}]
+    v3 = [{"date": "2024-05-02", "eps": 1.5, "epsEstimated": 1.3}]
+    assert len(pead.parse_earnings(stable)) == 1 and len(pead.parse_earnings(v3)) == 1
+    assert len(pead.parse_earnings({"Error Message": "x"})) == 0
+
+
+def test_find_events_and_simulate():
+    px = make_daily(n=400, seed=3)
+    spy = make_daily(n=400, seed=4)
+    earn = pd.DataFrame({"date": [px.index[100], px.index[200], px.index[300]],
+                         "eps": [1.3, 1.0, 1.0], "est": [1.0, 1.0, 0.01]})
+    ev = pead.find_events("X", earn, px)
+    assert len(ev) == 1 and ev[0]["entry"] == 102            # only the 30% beat; tiny estimate skipped
+    tr, daily = pead.simulate(ev, {"X": px, "SPY": spy}, 20, False, px.index[0].date())
+    assert len(tr) == 1 and tr.iloc[0]["exit"] == px.index[122]
+    assert abs(tr.iloc[0]["ret"] - (px["open"].iloc[122] / px["open"].iloc[102] - 1 - 2 * pead.SLIPPAGE)) < 1e-9
