@@ -47,7 +47,8 @@ class Broker:
     def account(self) -> dict:
         a = self.trading.get_account()
         bp = min(float(a.buying_power), float(a.non_marginable_buying_power or a.buying_power))
-        return {"equity": float(a.equity), "last_equity": float(a.last_equity), "buying_power": bp}
+        return {"equity": float(a.equity), "last_equity": float(a.last_equity), "buying_power": bp,
+                "cash": float(a.cash)}
 
     def clock(self):
         return self.trading.get_clock()
@@ -152,6 +153,19 @@ class Broker:
             take_profit=TakeProfitRequest(limit_price=round_price(target)),
             stop_loss=StopLossRequest(stop_price=round_price(stop)))
         return str(self.trading.submit_order(order_data=order).id)
+
+    def buy_notional(self, symbol: str, dollars: float) -> str:
+        """Fractional market buy for a dollar amount (Alpaca requires DAY for fractional)."""
+        order = MarketOrderRequest(symbol=symbol, notional=round(dollars, 2), side=OrderSide.BUY,
+                                   time_in_force=TimeInForce.DAY)
+        return str(self.trading.submit_order(order_data=order).id)
+
+    def position_summary(self, symbol: str):
+        try:
+            p = self.trading.get_open_position(symbol)
+            return float(p.qty), float(p.market_value), float(p.unrealized_pl)
+        except Exception:
+            return 0.0, 0.0, 0.0
 
     def flatten_all(self):
         self.trading.close_all_positions(cancel_orders=True)

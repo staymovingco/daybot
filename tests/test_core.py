@@ -219,3 +219,15 @@ def test_buy_and_hold_matches_price():
     curve, _ = swing.portfolio({"SPY": df}, {"SPY": pos}, 1.0)
     expected = df["open"].iloc[-1] / df["open"].iloc[0] * (1 - swing.SLIPPAGE)
     assert abs(curve.iloc[-1] - expected) / expected < 1e-3
+
+
+# ---------------- auto-invest ----------------
+from daybot.autoinvest import plan_buy
+
+
+def test_plan_buy():
+    assert plan_buy(100, 0, 500, 1, "", "2026-W48") == 100
+    assert plan_buy(100, 0, 500, 1, "2026-W48", "2026-W48") == 0      # once per week
+    assert plan_buy(900, 0, 500, 1, "", "2026-W48") == 500            # weekly cap
+    assert plan_buy(30, 10, 500, 1, "", "2026-W48") == 20             # keeps reserve
+    assert plan_buy(0.5, 0, 500, 1, "", "2026-W48") == 0              # below minimum

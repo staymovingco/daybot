@@ -1,0 +1,9 @@
+[Unit]
+Description=Run daybot auto-invest every weekday at 10:05 ET (buys at most once a week)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 10:05:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

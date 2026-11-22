@@ -1,0 +1,9 @@
+[Unit]
+Description=daybot weekly auto-invest
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/daybot
+ExecStart=/root/daybot/.venv/bin/python -m daybot.autoinvest

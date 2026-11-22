@@ -1,4 +1,22 @@
-# daybot: a $100 → $1,000 day-trading bot (paper first)
+# daybot
+
+## ✅ What to actually use: the auto-investor
+Testing (below) found no trading strategy that beat simply owning the S&P 500. So the recommended
+mode is `daybot.autoinvest`: once a week it invests whatever cash is in your Alpaca account into SPY
+(fractional shares, buy-only, never sells). You set up a recurring deposit; it does the rest.
+
+```
+python -m daybot.autoinvest --dry-run      # preview
+sudo cp deploy/autoinvest.service deploy/autoinvest.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now autoinvest.timer
+systemctl list-timers autoinvest.timer     # shows next run
+journalctl -u autoinvest -n 20             # shows what it did
+```
+Runs weekdays 10:05 ET, buys at most once per calendar week. Paper by default.
+
+---
+## Research tools (day trading / swing backtests) — results: no edge found
+
 
 Automated Opening Range Breakout bot for Alpaca. Small, rule-based, risk-first.
 
