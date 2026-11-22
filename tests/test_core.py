@@ -275,3 +275,38 @@ def test_short_pnl_and_pdt():
     assert len(taken) == 5 and curve[-1][1] > 10_000          # shorts profit when price falls
     taken_pdt, _, _ = _run_trades(trades, RiskConfig(), 10_000, pdt=True)
     assert len(taken_pdt) == 3                                  # 3 day trades per 5 days
+
+
+# ---------------- sector rotation ----------------
+from daybot import rotation
+
+
+def _rot_data(n=700):
+    data = {}
+    for i, s in enumerate(rotation.SECTORS + ["SPY", rotation.CASH]):
+        drift = 0.0001 * i if s != rotation.CASH else 0.00015
+        data[s] = make_daily(n=n, seed=i, drift=drift)
+    return data
+
+
+def test_rotation_picks_strongest_and_cash_when_trend_down():
+    data = _rot_data()
+    closes = pd.DataFrame({s: d["close"] for s, d in data.items()})
+    w = rotation.target_weights(closes, 600, 252, 3, trend_filter=False)
+    assert abs(w.sum() - 1) < 1e-9 and (w > 0).sum() == 3 and w[rotation.CASH] == 0
+    closes2 = closes.copy()
+    closes2.loc[closes2.index[590:601], "SPY"] = closes2["SPY"].iloc[:600].min() * 0.5   # crash
+    w2 = rotation.target_weights(closes2, 600, 252, 3, trend_filter=True)
+    assert w2[rotation.CASH] == 1.0
+
+
+def test_rotation_run_table():
+    data = _rot_data()
+    out = rotation.run(data, data["SPY"].index[300].date(), 10_000)
+    assert len(out) == 5 and out["rebalances"].iloc[0] > 10
+
+
+def test_month_ends():
+    idx = pd.bdate_range("2025-01-01", "2025-03-31")
+    me = rotation.month_ends(idx)
+    assert [idx[i].month for i in me] == [1, 2]
