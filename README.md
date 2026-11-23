@@ -12,7 +12,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now autoinvest.timer
 systemctl list-timers autoinvest.timer     # shows next run
 journalctl -u autoinvest -n 20             # shows what it did
 ```
-Runs weekdays 10:05 ET, buys at most once per calendar week. Paper by default.
+Runs weekdays 9:35 ET (7:35 MT), buys at most once per calendar week. Paper by default.
 
 ---
 ## Research tools (day trading / swing backtests) — results: no edge found
