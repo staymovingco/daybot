@@ -364,3 +364,11 @@ def test_explain_text():
     out = explain("SPY261231C00600000", 1, 15.0, 12.0, -300, 598.0, 600.0, _date(2026, 12, 31),
                   _date(2026, 11, 24))
     assert "break-even at expiry: $615.00" in out and "-300" in out and "time value" in out
+
+
+def test_options_verdict():
+    from daybot.options_demo import verdict
+    assert verdict(0.55, 30)[0] == "SELL" and "take-profit" in verdict(0.55, 30)[1]
+    assert verdict(-0.6, 30)[0] == "SELL" and "stop-loss" in verdict(-0.6, 30)[1]
+    assert verdict(0.1, 14)[0] == "SELL" and "time stop" in verdict(0.1, 14)[1]
+    assert verdict(0.1, 30)[0] == "HOLD"

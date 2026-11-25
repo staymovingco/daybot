@@ -6,7 +6,12 @@ put that account's keys in .env as OPTIONS_ALPACA_API_KEY / OPTIONS_ALPACA_API_S
 
   python -m daybot.options_demo --preview   # show the contract it would buy, buy nothing
   python -m daybot.options_demo --buy       # buy 1 contract (paper, market hours only)
-  python -m daybot.options_demo             # status report on what you own
+  python -m daybot.options_demo             # status report + SELL/HOLD verdict
+  python -m daybot.options_demo --sell      # sell all options in this paper account
+  python -m daybot.options_demo --auto-sell # sell only if a rule says SELL (for a schedule)
+
+Rules (change in .env): take profit at +50% (OPTIONS_TAKE_PROFIT=0.5), stop loss at -50%
+(OPTIONS_STOP_LOSS=0.5), and sell when 14 days or fewer are left (OPTIONS_EXIT_DAYS=14).
 """
 import argparse
 import os
@@ -28,6 +33,18 @@ def pick_contract(contracts, spot: float, today: date, min_days=30, max_days=45)
         if best is None or score < best[0]:
             best = (score, c)
     return best[1] if best else None
+
+
+def verdict(pl_pct: float, dte: int, take_profit=0.5, stop_loss=0.5, exit_days=14):
+    """Returns (action, reason). Rules are decided in advance, checked in this order."""
+    if pl_pct >= take_profit:
+        return "SELL", f"take-profit hit ({pl_pct:+.0%} >= +{take_profit:.0%})"
+    if pl_pct <= -stop_loss:
+        return "SELL", f"stop-loss hit ({pl_pct:+.0%} <= -{stop_loss:.0%})"
+    if dte <= exit_days:
+        return "SELL", f"time stop: {dte} days left (sell at {exit_days} or fewer - decay speeds up)"
+    return "HOLD", (f"no rule hit. Sell if it reaches {take_profit:+.0%} or {-stop_loss:+.0%}, "
+                    f"or when {exit_days} days are left")
 
 
 def explain(sym, qty, entry, now, pl, spot, strike, expiry, today):
@@ -60,6 +77,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--buy", action="store_true")
     ap.add_argument("--preview", action="store_true")
+    ap.add_argument("--sell", action="store_true", help="sell all option positions now")
+    ap.add_argument("--auto-sell", action="store_true", help="sell only positions whose rule says SELL")
     ap.add_argument("--use-main-account", action="store_true",
                     help="use ALPACA_API_KEY instead of the separate options paper account")
     a = ap.parse_args()
@@ -84,15 +103,34 @@ def main():
     today = date.today()
 
     held = [p for p in tc.get_all_positions() if str(getattr(p.asset_class, "value", p.asset_class)) == "us_option"]
+    tp = float(os.getenv("OPTIONS_TAKE_PROFIT", "0.5"))
+    sl = float(os.getenv("OPTIONS_STOP_LOSS", "0.5"))
+    xd = int(os.getenv("OPTIONS_EXIT_DAYS", "14"))
     if not a.buy and not a.preview:
         if not held:
-            print(f"No options yet in this paper account (cash ${float(acct.cash):,.0f}). "
+            print(f"No options in this paper account (cash ${float(acct.cash):,.0f}). "
                   "Run with --preview, then --buy.")
             return
         for p in held:
             c = tc.get_option_contract(p.symbol)
-            print(explain(p.symbol, float(p.qty), float(p.avg_entry_price), float(p.current_price),
-                          float(p.unrealized_pl), spot, float(c.strike_price), c.expiration_date, today))
+            entry, qty = float(p.avg_entry_price), float(p.qty)
+            pl = float(p.unrealized_pl)
+            pl_pct = pl / (entry * 100 * qty) if entry else 0.0
+            dte = (c.expiration_date - today).days
+            action, why = verdict(pl_pct, dte, tp, sl, xd)
+            print(explain(p.symbol, qty, entry, float(p.current_price), pl, spot,
+                          float(c.strike_price), c.expiration_date, today))
+            print(f"\n>>> {action}: {why}")
+            if a.sell or (a.auto_sell and action == "SELL"):
+                if not tc.get_clock().is_open:
+                    print("Market is closed - can't sell now. Try between 7:30am and 2:00pm Mountain.")
+                    continue
+                o = tc.submit_order(MarketOrderRequest(symbol=p.symbol, qty=qty, side=OrderSide.SELL,
+                                                       time_in_force=TimeInForce.DAY))
+                print(f"PAPER sell order placed for {qty:g} {p.symbol} (order {o.id}). "
+                      f"Result: about {pl:+,.0f} ({pl_pct:+.0%}).")
+            elif action == "SELL":
+                print("    To follow the rule, run:  .venv/bin/python -m daybot.options_demo --sell")
             print()
         return
 
