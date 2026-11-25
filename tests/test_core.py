@@ -372,3 +372,23 @@ def test_options_verdict():
     assert verdict(-0.6, 30)[0] == "SELL" and "stop-loss" in verdict(-0.6, 30)[1]
     assert verdict(0.1, 14)[0] == "SELL" and "time stop" in verdict(0.1, 14)[1]
     assert verdict(0.1, 30)[0] == "HOLD"
+
+
+# ---------------- strangle demo ----------------
+from daybot.strangle_demo import pick_strangle, explain as strangle_explain
+
+
+def test_pick_strangle():
+    today = _date(2026, 11, 25)
+    mk = lambda strike, days: SimpleNamespace(strike_price=str(strike), tradable=True,
+                                              expiration_date=today + _td(days=days))
+    calls = [mk(s, d) for s in (715, 720, 725, 730) for d in (36, 44)]
+    puts = [mk(s, d) for s in (670, 675, 680, 685) for d in (36, 44)]
+    c, p = pick_strangle(calls, puts, 700.0, today)
+    assert float(c.strike_price) == 720 and float(p.strike_price) == 680
+    assert c.expiration_date == p.expiration_date == today + _td(days=36)
+
+
+def test_strangle_explain():
+    out = strangle_explain(700.0, 721.0, 679.0, 20.0, 18.0, -200, _date(2026, 12, 31), _date(2026, 11, 25))
+    assert "above $741.00" in out and "below $659.00" in out and "-200" in out
