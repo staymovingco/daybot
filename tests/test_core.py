@@ -343,3 +343,24 @@ def test_parse_alphavantage():
     df = pead.parse_alphavantage(data)
     assert len(df) == 1 and df.iloc[0]["eps"] == 1.53
     assert len(pead.parse_alphavantage({"Information": "rate limit"})) == 0
+
+
+# ---------------- options demo ----------------
+from types import SimpleNamespace
+from datetime import date as _date, timedelta as _td
+from daybot.options_demo import pick_contract, explain
+
+
+def test_pick_contract():
+    today = _date(2026, 11, 24)
+    mk = lambda strike, days, tradable=True: SimpleNamespace(strike_price=str(strike), tradable=tradable,
+                                                             expiration_date=today + _td(days=days))
+    cs = [mk(600, 37), mk(605, 37), mk(601, 20), mk(600, 60), mk(602, 35, tradable=False)]
+    c = pick_contract(cs, 602.0, today)
+    assert float(c.strike_price) == 600 and (c.expiration_date - today).days == 37
+
+
+def test_explain_text():
+    out = explain("SPY261231C00600000", 1, 15.0, 12.0, -300, 598.0, 600.0, _date(2026, 12, 31),
+                  _date(2026, 11, 24))
+    assert "break-even at expiry: $615.00" in out and "-300" in out and "time value" in out
